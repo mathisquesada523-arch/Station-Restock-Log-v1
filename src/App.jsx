@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { supabase } from "./supabase";
 import React, { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -122,6 +124,7 @@ export default function App() {
   const [supervisorCode, setSupervisorCode] = useState("");
   const [message, setMessage] = useState("");
   const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     date: today,
     employeeId: "",
@@ -131,6 +134,35 @@ export default function App() {
     qty: "",
     note: "",
   });
+    useEffect(() => {
+    fetchLogs();
+    }, []);
+
+    async function fetchLogs() {
+    const { data, error } = await supabase
+    .from("supply_logs")
+    .select("*")
+    .eq("archived", false)
+    .order("created_at", { ascending: false });
+
+    if (!error && data) {
+    const formatted = data.map((log) => ({
+      id: log.id,
+      date: log.date,
+      employeeId: log.employee_id,
+      station: log.station,
+      category: log.category,
+      item: log.item,
+      qty: log.quantity,
+      note: log.comments || "",
+      restocked: log.restocked,
+    }));
+
+    setLogs(formatted);
+    }
+
+    setLoading(false);
+    }
 
   const pendingLogs = logs.filter((log) => !log.restocked);
 
@@ -143,8 +175,26 @@ export default function App() {
     }
     setForm((current) => ({ ...current, [field]: value }));
   }
+async function archiveLog(id) {
+  const confirmArchive = window.confirm(
+    "Are you sure you want to remove this item from Usage History?"
+  );
 
-  function submitLog() {
+  if (!confirmArchive) return;
+
+  const { error } = await supabase
+    .from("supply_logs")
+    .update({ archived: true })
+    .eq("id", id);
+
+  if (error) {
+    setMessage("Error removing history item. Please try again.");
+    return;
+  }
+
+  await fetchLogs();
+}
+  async function submitLog() {
     if (!form.station) return setMessage("Please select a station.");
     if (!form.category) return setMessage("Please select a category.");
     if (!form.item) return setMessage("Please select an item.");
@@ -165,7 +215,25 @@ export default function App() {
       restocked: false,
     };
 
-    setLogs((current) => [newLog, ...current]);
+    const { error } = await supabase.from("supply_logs").insert([
+  {
+    date: newLog.date,
+    employee_id: newLog.employeeId,
+    station: newLog.station,
+    category: newLog.category,
+    item: newLog.item,
+    quantity: newLog.qty,
+    comments: newLog.note,
+    restocked: false,
+  },
+]);
+
+if (error) {
+  setMessage("Error saving log. Please try again.");
+  return;
+}
+
+await fetchLogs();
     setMessage(
       `Submitted: Employee ${newLog.employeeId} took ${newLog.qty} ${newLog.item} from ${newLog.station}. Supervisor dashboard updated.`
     );
@@ -528,6 +596,13 @@ export default function App() {
                                 Undo
                               </button>
                             )}
+
+                            <button
+                              className="undoBtn"
+                              onClick={() => archiveLog(log.id)}
+                              >
+                               Remove
+                              </button>
                           </div>
                         </td>
                       </tr>
