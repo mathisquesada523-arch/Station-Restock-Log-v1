@@ -130,6 +130,10 @@ export default function App() {
   const [inventoryItems, setInventoryItems] = useState([]);
   const [inventoryCounts, setInventoryCounts] = useState({});
   const [editedItems, setEditedItems] = useState({});
+  const [editedPar, setEditedPar] = useState({});
+  const [movementHistory, setMovementHistory] = useState([]);
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState("All");
+  const [movementEntries, setMovementEntries] = useState({});
   const [form, setForm] = useState({
     date: today,
     employeeId: "",
@@ -143,6 +147,7 @@ export default function App() {
     fetchLogs();
     fetchInventoryItems();
     fetchCurrentInventoryCounts();
+    fetchMovementHistory();
   }, []);
 
     async function fetchLogs() {
@@ -170,7 +175,36 @@ export default function App() {
 
     setLoading(false);
     }
+function updateMovementEntry(itemId, field, value) {
+  setMovementEntries((prev) => ({
+    ...prev,
+    [itemId]: {
+      ...prev[itemId],
+      [field]: value,
+    },
+  }));
+}
 
+async function deleteMovementHistoryItem(id) {
+  const confirmDelete = window.confirm(
+    "Are you sure you want to delete this movement history entry?"
+  );
+
+  if (!confirmDelete) return;
+
+  const { error } = await supabase
+    .from("inventory_movements")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    setMessage("Error deleting movement history item.");
+    return;
+  }
+
+  await fetchMovementHistory();
+  setMessage("Movement history item deleted.");
+}
 
   async function fetchInventoryItems() {
     const { data, error } = await supabase
@@ -183,6 +217,122 @@ export default function App() {
   if (!error && data) {
     setInventoryItems(data);
   }
+}
+
+function calculateMovementAmount(item, movementType, amount) {
+  const qty = Number(amount || 0);
+
+  if (movementType === "Case") {
+    return qty * Number(item.base_units_per_bulk || 0);
+  }
+
+  if (movementType === "Units") {
+    return qty * Number(item.base_units_per_inner || 0);
+  }
+
+  return qty;
+}
+
+async function fetchMovementHistory() {
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select(`
+      id,
+      movement_date,
+      movement_type,
+      quantity_change,
+      inventory_items (
+        category,
+        item_name
+      )
+    `)
+    .order("movement_date", { ascending: false });
+
+  if (error || !data) return;
+
+  setMovementHistory(data);
+}
+
+async function saveMovement(item) {
+  const entry = movementEntries[item.id] || {};
+  const movement = entry.movement || "Added";
+  const type = entry.type || "Case";
+  const amount = Number(entry.amount || 0);
+
+  if (amount <= 0) {
+  await fetchCurrentInventoryCounts();
+  await fetchMovementHistory();
+    setMessage("Enter an amount before saving movement.");
+    return;
+  }
+
+  const movementTotal = calculateMovementAmount(item, type, amount);
+
+  const current = inventoryCounts[item.id] || {};
+  const currentCases = Number(current.cases || 0);
+  const currentUnits = Number(current.units || 0);
+  const currentIndividual = Number(current.individual || 0);
+
+  const updatedIndividual =
+    movement === "Added"
+      ? currentIndividual + movementTotal
+      : Math.max(currentIndividual - movementTotal, 0);
+
+  const updatedRow = {
+    item_id: item.id,
+    bulk_count: currentCases,
+    inner_count: currentUnits,
+    individual_count: updatedIndividual,
+    calculated_total:
+      currentCases * Number(item.base_units_per_bulk || 0) +
+      currentUnits * Number(item.base_units_per_inner || 0) +
+      updatedIndividual,
+    updated_by: "supervisor",
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: countError } = await supabase
+    .from("current_inventory_counts")
+    .upsert(updatedRow, { onConflict: "item_id" });
+
+  if (countError) {
+    console.error(countError);
+    setMessage("Error updating inventory count.");
+    return;
+  }
+
+  const { error: movementError } = await supabase
+    .from("inventory_movements")
+    .insert({
+      item_id: item.id,
+      movement_type: movement,
+      quantity_change: movement === "Added" ? movementTotal : -movementTotal,
+    });
+
+  if (movementError) {
+    console.error(movementError);
+    setMessage("Inventory updated, but movement log failed.");
+    return;
+  }
+
+  setInventoryCounts((prev) => ({
+    ...prev,
+    [item.id]: {
+      ...prev[item.id],
+      individual: updatedIndividual,
+    },
+  }));
+
+  setMovementEntries((prev) => ({
+    ...prev,
+    [item.id]: {
+      movement: "Added",
+      type: "Case",
+      amount: "",
+    },
+  }));
+
+  setMessage("Movement saved and inventory updated.");
 }
 
   const pendingLogs = logs.filter((log) => !log.restocked);
@@ -214,6 +364,129 @@ async function archiveLog(id) {
   }
 
   await fetchLogs();
+}
+
+async function clearMovementHistory() {
+  const confirmClear = window.confirm(
+    "Are you sure you want to clear all movement history?"
+  );
+
+  if (!confirmClear) return;
+
+  const { error } = await supabase
+    .from("inventory_movements")
+    .delete()
+    .neq("id", 0);
+
+  if (error) {
+    setMessage("Error clearing movement history.");
+    return;
+  }
+
+  await fetchMovementHistory();
+  setMessage("Movement history cleared.");
+}
+
+async function resetCurrentInventoryCount(item) {
+  const confirmReset = window.confirm(
+    `Are you sure you want to reset the current count for ${item.item_name} to zero?`
+  );
+
+  if (!confirmReset) return;
+
+  const updatedRow = {
+    item_id: item.id,
+    bulk_count: 0,
+    inner_count: 0,
+    individual_count: 0,
+    calculated_total: 0,
+    updated_by: "supervisor",
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("current_inventory_counts")
+    .upsert(updatedRow, { onConflict: "item_id" });
+
+  if (error) {
+    setMessage("Error resetting current count.");
+    return;
+  }
+
+  await fetchCurrentInventoryCounts();
+  setMessage(`${item.item_name} current count reset to zero.`);
+}
+
+async function deleteMovementHistoryItem(id) {
+  const confirmDelete = window.confirm(
+    "Are you sure you want to delete this movement history entry?"
+  );
+
+  if (!confirmDelete) return;
+
+  const { error } = await supabase
+    .from("inventory_movements")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    setMessage("Error deleting movement history item.");
+    return;
+  }
+
+  await fetchMovementHistory();
+  setMessage("Movement history item deleted.");
+}
+
+async function clearMovementHistory() {
+  const confirmClear = window.confirm(
+    "Are you sure you want to clear all movement history?"
+  );
+
+  if (!confirmClear) return;
+
+  const { error } = await supabase
+    .from("inventory_movements")
+    .delete()
+    .neq("id", 0);
+
+  if (error) {
+    setMessage("Error clearing movement history.");
+    return;
+  }
+
+  await fetchMovementHistory();
+  setMessage("Movement history cleared.");
+}
+
+async function resetCurrentInventoryCount(item) {
+  const confirmReset = window.confirm(
+    `Are you sure you want to reset the current count for ${item.item_name} to zero?`
+  );
+
+  if (!confirmReset) return;
+
+  const updatedRow = {
+    item_id: item.id,
+    bulk_count: 0,
+    inner_count: 0,
+    individual_count: 0,
+    calculated_total: 0,
+    updated_by: "supervisor",
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("current_inventory_counts")
+    .upsert(updatedRow, { onConflict: "item_id" });
+
+  if (error) {
+    setMessage("Error resetting current count.");
+    return;
+  }
+
+  await fetchCurrentInventoryCounts();
+  setMessage(`${item.item_name} current count reset to zero.`);
 }
 
 async function fetchCurrentInventoryCounts() {
@@ -371,8 +644,18 @@ function calculateInventoryTotal(item) {
 
   return caseCount * caseQty + unitCount * unitQty + individualCount;
 }
+const inventoryCategories = [
+  "All",
+  ...new Set(inventoryItems.map((item) => item.category)),
+];
 
-const [editedPar, setEditedPar] = useState({});
+const filteredInventoryItems =
+  inventoryCategoryFilter === "All"
+    ? inventoryItems
+    : inventoryItems.filter(
+        (item) => item.category === inventoryCategoryFilter
+      );
+
 
 function updateEditedPar(itemId, field, value) {
   setEditedPar((prev) => ({
@@ -437,6 +720,7 @@ function updateEditedItem(itemId, field, value) {
     },
   }));
 }
+
 
 async function saveInventoryItem(item) {
   const edits = editedItems[item.id] || {};
@@ -679,42 +963,60 @@ async function saveInventoryItem(item) {
 {supervisorPage === "bulk" && (
   <section className="historyCard">
     <h2>
-      <div
-  style={{
-    display: "flex",
-    gap: "10px",
-    marginBottom: "20px",
-    flexWrap: "wrap",
-  }}
->
-  {["count", "reorder", "movement", "items", "par"].map((page) => (
-    <button
-      key={page}
-      onClick={() => setBulkPage(page)}
-      style={{
-        border: "none",
-        background: bulkPage === page ? "#22d3ee" : "#e2e8f0",
-        color: "#020617",
-        padding: "10px 16px",
-        borderRadius: "12px",
-        fontWeight: 900,
-        cursor: "pointer",
-      }}
-    >
-      {page === "count"
-        ? "Count"
-        : page === "reorder"
-        ? "Reorder"
-        : page === "movement"
-        ? "Movement Log"
-        : page === "items"
-? "Items List"
-: "PAR"}
-    </button>
-  ))}
-</div>
       <PackageCheck size={24} /> Main HQ Bulk Inventory
     </h2>
+
+    <div
+      style={{
+        display: "flex",
+        gap: "10px",
+        marginBottom: "16px",
+        flexWrap: "wrap",
+      }}
+    >
+      {["count", "reorder", "movement", "items", "par"].map((page) => (
+        <button
+          key={page}
+          onClick={() => setBulkPage(page)}
+          style={{
+            border: "none",
+            background: bulkPage === page ? "#22d3ee" : "#e2e8f0",
+            color: "#020617",
+            padding: "10px 16px",
+            borderRadius: "12px",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          {page === "count"
+            ? "Count"
+            : page === "reorder"
+            ? "Reorder"
+            : page === "movement"
+            ? "Movement Log"
+            : page === "items"
+            ? "Items List"
+            : "PAR"}
+        </button>
+      ))}
+    </div>
+
+    <div style={{ marginBottom: "16px" }}>
+      <label style={{ fontWeight: 900, marginRight: "10px" }}>
+        Filter Category:
+      </label>
+
+      <select
+        value={inventoryCategoryFilter}
+        onChange={(e) => setInventoryCategoryFilter(e.target.value)}
+      >
+        {inventoryCategories.map((category) => (
+          <option key={category} value={category}>
+            {category}
+          </option>
+        ))}
+      </select>
+    </div>
     <div
   className="historyTableWrap"
   style={{ display: bulkPage === "items" ? "block" : "none" }}
@@ -740,7 +1042,7 @@ async function saveInventoryItem(item) {
               </td>
             </tr>
           ) : (
-            inventoryItems.map((item) => (
+            filteredInventoryItems.map((item) => (
               <tr key={item.id}>
 <td>{item.category}</td>
 <td>{item.item_name}</td>
@@ -849,7 +1151,7 @@ async function saveInventoryItem(item) {
     </thead>
 
     <tbody>
-      {inventoryItems.map((item) => (
+      {filteredInventoryItems.map((item) => (
         <tr key={item.id}>
           <td>{item.category}</td>
 
@@ -921,16 +1223,175 @@ async function saveInventoryItem(item) {
 
 {bulkPage === "reorder" && (
   <div className="historyTableWrap">
-    <h3>Reorder List</h3>
-    <p>Reorder page coming next. This will calculate what needs to be ordered based on saved counts and PAR levels.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Item</th>
+          <th>Current Total</th>
+          <th>PAR Type</th>
+          <th>PAR Amount</th>
+          <th>Reorder Needed</th>
+<th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {filteredInventoryItems.map((item) => {
+          const currentTotal = calculateInventoryTotal(item);
+          const parAmount = Number(item.par_amount || 0);
+          const reorderNeeded = Math.max(parAmount - currentTotal, 0);
+
+          return (
+            <tr key={item.id}>
+              <td>{item.category}</td>
+              <td>{item.item_name}</td>
+              <td>{currentTotal}</td>
+              <td>{item.par_type || "Case"}</td>
+              <td>{parAmount}</td>
+              <td>{reorderNeeded}</td>
+              <td>
+  <button
+    className="smallBtn"
+    onClick={() => resetCurrentInventoryCount(item)}
+  >
+    Reset Count
+  </button>
+</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   </div>
 )}
 
 {bulkPage === "movement" && (
-  <div className="historyTableWrap">
-    <h3>Movement Log</h3>
-    <p>Movement log coming next. This will track inventory added, removed, adjusted, or received.</p>
-  </div>
+  <>
+    <div className="historyTableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Item</th>
+          <th>Movement</th>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {filteredInventoryItems.map((item) => (
+          <tr key={item.id}>
+            <td>{item.category}</td>
+            <td>{item.item_name}</td>
+
+            <td>
+              <select
+                value={movementEntries[item.id]?.movement || "Added"}
+                onChange={(e) =>
+                  updateMovementEntry(item.id, "movement", e.target.value)
+                }
+              >
+                <option value="Added">Added</option>
+                <option value="Removed">Removed</option>
+              </select>
+            </td>
+
+            <td>
+              <select
+                value={movementEntries[item.id]?.type || "Case"}
+                onChange={(e) =>
+                  updateMovementEntry(item.id, "type", e.target.value)
+                }
+              >
+                <option value="Case">Case</option>
+                <option value="Units">Units</option>
+                <option value="Individual">Individual</option>
+              </select>
+            </td>
+
+            <td>
+              <input
+  type="number"
+  min="0"
+  value={movementEntries[item.id]?.amount ?? ""}
+  onChange={(e) =>
+    updateMovementEntry(item.id, "amount", e.target.value)
+  }
+/>
+            </td>
+
+            <td>
+             <button className="smallBtn" onClick={() => saveMovement(item)}>
+  Save
+</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+      </div>
+
+    <div className="historyTableWrap" style={{ marginTop: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+  <h3>Movement History</h3>
+
+  <button className="btn secondary" onClick={clearMovementHistory}>
+    Clear History
+  </button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      <th>Category</th>
+      <th>Item</th>
+      <th>Movement</th>
+<th>Quantity Change</th>
+<th>Actions</th>    </tr>
+  </thead>
+
+  <tbody>
+    {movementHistory.length === 0 ? (
+      <tr>
+<td colSpan="6" className="noHistory">          No movement history found.
+        </td>
+      </tr>
+    ) : (
+      movementHistory.map((log) => (
+        <tr key={log.id}>
+          <td>
+            {new Date(log.movement_date).toLocaleString()}
+          </td>
+
+          <td>
+            {log.inventory_items?.category || "Unknown"}
+          </td>
+
+          <td>
+            {log.inventory_items?.item_name || "Unknown"}
+          </td>
+
+          <td>{log.movement_type}</td>
+
+          <td>
+  <button
+    className="smallBtn"
+    onClick={() => deleteMovementHistoryItem(log.id)}
+  >
+    Remove
+  </button>
+</td>
+        </tr>
+      ))
+    )}
+  </tbody>
+</table>
+    </div>
+  </>
 )}
 
 {bulkPage === "par" && (
@@ -947,7 +1408,7 @@ async function saveInventoryItem(item) {
       </thead>
 
       <tbody>
-        {inventoryItems.map((item) => (
+        {filteredInventoryItems.map((item) => (
           <tr key={item.id}>
             <td>{item.category}</td>
             <td>{item.item_name}</td>
@@ -986,6 +1447,23 @@ async function saveInventoryItem(item) {
     </table>
   </div>
 )}
+<div style={{ marginBottom: "16px" }}>
+  <label style={{ fontWeight: 900, marginRight: "10px" }}>
+    Filter Category:
+  </label>
+
+  <select
+    value={inventoryCategoryFilter}
+    onChange={(e) => setInventoryCategoryFilter(e.target.value)}
+  >
+    {inventoryCategories.map((category) => (
+      <option key={category} value={category}>
+        {category}
+      </option>
+    ))}
+  </select>
+</div>
+
   </section>
   )}
           <section className="statsGrid" style={{ display: supervisorPage === "restock" ? "grid" : "none" }}>
