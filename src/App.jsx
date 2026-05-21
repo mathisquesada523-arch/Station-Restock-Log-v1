@@ -129,6 +129,7 @@ export default function App() {
   const [bulkPage, setBulkPage] = useState("count");
   const [inventoryItems, setInventoryItems] = useState([]);
   const [inventoryCounts, setInventoryCounts] = useState({});
+  const [editedItems, setEditedItems] = useState({});
   const [form, setForm] = useState({
     date: today,
     employeeId: "",
@@ -141,6 +142,7 @@ export default function App() {
   useEffect(() => {
     fetchLogs();
     fetchInventoryItems();
+    fetchCurrentInventoryCounts();
   }, []);
 
     async function fetchLogs() {
@@ -168,6 +170,7 @@ export default function App() {
 
     setLoading(false);
     }
+
 
   async function fetchInventoryItems() {
     const { data, error } = await supabase
@@ -212,6 +215,38 @@ async function archiveLog(id) {
 
   await fetchLogs();
 }
+
+async function fetchCurrentInventoryCounts() {
+  const { data, error } = await supabase
+    .from("current_inventory_counts")
+    .select("*");
+
+  if (error || !data) return;
+
+  const loadedCounts = {};
+
+  data.forEach((row) => {
+    loadedCounts[row.item_id] = {
+      cases: row.bulk_count || "",
+      units: row.inner_count || "",
+      individual: row.individual_count || "",
+    };
+  });
+
+  setInventoryCounts(loadedCounts);
+}
+
+function startNewCount() {
+  const confirmNew = window.confirm(
+    "Are you sure you want to start a new count? This will clear your current count entries."
+  );
+
+  if (!confirmNew) return;
+
+  setInventoryCounts({});
+  setMessage("New count started.");
+}
+
   async function submitLog() {
     if (!form.station) return setMessage("Please select a station.");
     if (!form.category) return setMessage("Please select a category.");
@@ -290,6 +325,40 @@ await fetchLogs();
     );
   }
 
+async function saveInventoryCount() {
+  const rowsToSave = inventoryItems.map((item) => {
+    const count = inventoryCounts[item.id] || {};
+
+    const bulkCount = Number(count.cases || 0);
+    const innerCount = Number(count.units || 0);
+    const individualCount = Number(count.individual || 0);
+
+    return {
+      item_id: item.id,
+      bulk_count: bulkCount,
+      inner_count: innerCount,
+      individual_count: individualCount,
+      calculated_total: calculateInventoryTotal(item),
+      updated_by: "supervisor",
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  const { error } = await supabase
+    .from("current_inventory_counts")
+    .upsert(rowsToSave, {
+      onConflict: "item_id",
+    });
+
+  if (error) {
+    console.error(error);
+    setMessage("Error saving inventory count.");
+    return;
+  }
+
+  setMessage("Inventory count saved.");
+}
+
 function calculateInventoryTotal(item) {
   const count = inventoryCounts[item.id] || {};
 
@@ -301,6 +370,40 @@ function calculateInventoryTotal(item) {
   const unitQty = Number(item.base_units_per_inner || 0);
 
   return caseCount * caseQty + unitCount * unitQty + individualCount;
+}
+
+const [editedPar, setEditedPar] = useState({});
+
+function updateEditedPar(itemId, field, value) {
+  setEditedPar((prev) => ({
+    ...prev,
+    [itemId]: {
+      ...prev[itemId],
+      [field]: value,
+    },
+  }));
+}
+
+async function saveParSetting(item) {
+  const edits = editedPar[item.id] || {};
+
+  const updatedPar = {
+    par_type: edits.par_type || item.par_type || "Case",
+    par_amount: Number(edits.par_amount ?? item.par_amount ?? 0),
+  };
+
+  const { error } = await supabase
+    .from("inventory_items")
+    .update(updatedPar)
+    .eq("id", item.id);
+
+  if (error) {
+    setMessage("Error saving PAR setting.");
+    return;
+  }
+
+  setMessage("PAR setting saved.");
+  await fetchInventoryItems();
 }
 
   function markStationRestocked(station) {
@@ -324,6 +427,41 @@ function calculateInventoryTotal(item) {
   function clearAllLogs() {
     setLogs([]);
   }
+
+function updateEditedItem(itemId, field, value) {
+  setEditedItems((prev) => ({
+    ...prev,
+    [itemId]: {
+      ...prev[itemId],
+      [field]: value,
+    },
+  }));
+}
+
+async function saveInventoryItem(item) {
+  const edits = editedItems[item.id] || {};
+
+  const updatedItem = {
+    bulk_unit: edits.bulk_unit ?? item.bulk_unit,
+    inner_unit: edits.inner_unit ?? item.inner_unit,
+    base_unit: edits.base_unit ?? item.base_unit,
+    base_units_per_bulk: Number(edits.base_units_per_bulk ?? item.base_units_per_bulk ?? 0),
+    base_units_per_inner: Number(edits.base_units_per_inner ?? item.base_units_per_inner ?? 0),
+  };
+
+  const { error } = await supabase
+    .from("inventory_items")
+    .update(updatedItem)
+    .eq("id", item.id);
+
+  if (error) {
+    setMessage("Error saving item settings.");
+    return;
+  }
+
+  setMessage("Item settings saved.");
+  await fetchInventoryItems();
+}
 
   const mostUsedItem = (() => {
     if (pendingLogs.length === 0) return "None";
@@ -591,6 +729,7 @@ function calculateInventoryTotal(item) {
 <th>Individual</th>
 <th>Case Qty</th>
 <th>Units Qty</th>
+<th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -605,11 +744,71 @@ function calculateInventoryTotal(item) {
               <tr key={item.id}>
 <td>{item.category}</td>
 <td>{item.item_name}</td>
-<td>{item.bulk_unit || ""}</td>
-<td>{item.inner_unit || ""}</td>
-<td>{item.base_unit || ""}</td>
-<td>{item.base_units_per_bulk || 0}</td>
-<td>{item.base_units_per_inner || 0}</td>
+<td>
+  <input
+    value={editedItems[item.id]?.bulk_unit ?? item.bulk_unit ?? ""}
+    onChange={(e) =>
+      updateEditedItem(item.id, "bulk_unit", e.target.value)
+    }
+  />
+</td>
+
+<td>
+  <input
+    value={editedItems[item.id]?.inner_unit ?? item.inner_unit ?? ""}
+    onChange={(e) =>
+      updateEditedItem(item.id, "inner_unit", e.target.value)
+    }
+  />
+</td>
+
+<td>
+  <input
+    value={editedItems[item.id]?.base_unit ?? item.base_unit ?? ""}
+    onChange={(e) =>
+      updateEditedItem(item.id, "base_unit", e.target.value)
+    }
+  />
+</td>
+
+<td>
+  <input
+    type="number"
+    min="0"
+    value={
+      editedItems[item.id]?.base_units_per_bulk ??
+      item.base_units_per_bulk ??
+      0
+    }
+    onChange={(e) =>
+      updateEditedItem(item.id, "base_units_per_bulk", e.target.value)
+    }
+  />
+</td>
+
+<td>
+  <input
+    type="number"
+    min="0"
+    value={
+      editedItems[item.id]?.base_units_per_inner ??
+      item.base_units_per_inner ??
+      0
+    }
+    onChange={(e) =>
+      updateEditedItem(item.id, "base_units_per_inner", e.target.value)
+    }
+  />
+</td>
+
+<td>
+  <button
+    className="smallBtn"
+    onClick={() => saveInventoryItem(item)}
+  >
+    Save
+  </button>
+</td>
               </tr>
             ))
           )
@@ -620,6 +819,23 @@ function calculateInventoryTotal(item) {
 
     {bulkPage === "count" && (  
    <div className="historyTableWrap">
+    <div
+  style={{
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "13px",
+    marginBottom: "9px",
+    flexWrap: "wrap",
+  }}
+>
+  <button className="btn" onClick={saveInventoryCount}>
+    Save Count
+  </button>
+
+  <button className="btn secondary" onClick={startNewCount}>
+    New Count
+  </button>
+</div>
   <table>
     <thead>
       <tr>
@@ -643,7 +859,9 @@ function calculateInventoryTotal(item) {
             <input
               type="number"
               min="0"
+              disabled={!Number(item.base_units_per_bulk)}
               value={inventoryCounts[item.id]?.cases || ""}
+
               onChange={(e) =>
                 setInventoryCounts((prev) => ({
                   ...prev,
@@ -660,6 +878,7 @@ function calculateInventoryTotal(item) {
             <input
               type="number"
               min="0"
+              disabled={!Number(item.base_units_per_inner)}
               value={inventoryCounts[item.id]?.units || ""}
               onChange={(e) =>
                 setInventoryCounts((prev) => ({
@@ -677,6 +896,7 @@ function calculateInventoryTotal(item) {
             <input
               type="number"
               min="0"
+              disabled={!item.base_unit}
               value={inventoryCounts[item.id]?.individual || ""}
               onChange={(e) =>
                 setInventoryCounts((prev) => ({
@@ -715,8 +935,55 @@ function calculateInventoryTotal(item) {
 
 {bulkPage === "par" && (
   <div className="historyTableWrap">
-    <h3>PAR Levels</h3>
-    <p>This is where we will set reorder targets for each item.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Item</th>
+          <th>PAR Type</th>
+          <th>PAR Amount</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {inventoryItems.map((item) => (
+          <tr key={item.id}>
+            <td>{item.category}</td>
+            <td>{item.item_name}</td>
+
+            <td>
+<select
+  value={editedPar[item.id]?.par_type ?? item.par_type ?? "Case"}
+  onChange={(e) => updateEditedPar(item.id, "par_type", e.target.value)}
+>
+  <option value="Case">Case</option>
+  <option value="Units">Units</option>
+  <option value="Individual">Individual</option>
+</select>
+            </td>
+
+            <td>
+<input
+  type="number"
+  min="0"
+  value={editedPar[item.id]?.par_amount ?? item.par_amount ?? ""}
+  onChange={(e) => updateEditedPar(item.id, "par_amount", e.target.value)}
+/>
+            </td>
+
+            <td>
+             <button
+  className="smallBtn"
+  onClick={() => saveParSetting(item)}
+>
+  Save
+</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   </div>
 )}
   </section>
