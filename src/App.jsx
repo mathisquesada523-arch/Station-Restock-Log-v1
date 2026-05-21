@@ -957,13 +957,13 @@ async function saveInventoryItem(item) {
       fontSize: "14px",
     }}
   >
-    Main HQ Bulk Inventory
+    Freehold Inventory
   </button>
 </div>
 {supervisorPage === "bulk" && (
   <section className="historyCard">
     <h2>
-      <PackageCheck size={24} /> Main HQ Bulk Inventory
+      <PackageCheck size={24} /> Freehold Inventory
     </h2>
 
     <div
