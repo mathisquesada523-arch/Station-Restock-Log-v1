@@ -132,6 +132,8 @@ export default function App() {
   const [editedItems, setEditedItems] = useState({});
   const [editedPar, setEditedPar] = useState({});
   const [movementHistory, setMovementHistory] = useState([]);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [showReorderOnly, setShowReorderOnly] = useState(false);
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState("All");
   const [movementEntries, setMovementEntries] = useState({});
   const [form, setForm] = useState({
@@ -273,19 +275,39 @@ async function saveMovement(item) {
   const currentUnits = Number(current.units || 0);
   const currentIndividual = Number(current.individual || 0);
 
-  const updatedIndividual =
+  let updatedCases = currentCases;
+let updatedUnits = currentUnits;
+let updatedIndividual = currentIndividual;
+
+if (type === "Case") {
+  updatedCases =
     movement === "Added"
-      ? currentIndividual + movementTotal
-      : Math.max(currentIndividual - movementTotal, 0);
+      ? currentCases + amount
+      : Math.max(currentCases - amount, 0);
+}
+
+if (type === "Units") {
+  updatedUnits =
+    movement === "Added"
+      ? currentUnits + amount
+      : Math.max(currentUnits - amount, 0);
+}
+
+if (type === "Individual") {
+  updatedIndividual =
+    movement === "Added"
+      ? currentIndividual + amount
+      : Math.max(currentIndividual - amount, 0);
+}
 
   const updatedRow = {
     item_id: item.id,
-    bulk_count: currentCases,
-    inner_count: currentUnits,
-    individual_count: updatedIndividual,
+    bulk_count: updatedCases,
+inner_count: updatedUnits,
+individual_count: updatedIndividual,
     calculated_total:
-      currentCases * Number(item.base_units_per_bulk || 0) +
-      currentUnits * Number(item.base_units_per_inner || 0) +
+      updatedCases * Number(item.base_units_per_bulk || 0) +
+      updatedUnits * Number(item.base_units_per_inner || 0) +
       updatedIndividual,
     updated_by: "supervisor",
     updated_at: new Date().toISOString(),
@@ -304,10 +326,11 @@ async function saveMovement(item) {
   const { error: movementError } = await supabase
     .from("inventory_movements")
     .insert({
-      item_id: item.id,
-      movement_type: movement,
-      quantity_change: movement === "Added" ? movementTotal : -movementTotal,
-    });
+  item_id: item.id,
+  movement_type: movement,
+  count_type: type,
+  quantity_change: movement === "Added" ? amount : -amount,
+});
 
   if (movementError) {
     console.error(movementError);
@@ -316,12 +339,13 @@ async function saveMovement(item) {
   }
 
   setInventoryCounts((prev) => ({
-    ...prev,
-    [item.id]: {
-      ...prev[item.id],
-      individual: updatedIndividual,
-    },
-  }));
+  ...prev,
+  [item.id]: {
+    cases: updatedCases,
+    units: updatedUnits,
+    individual: updatedIndividual,
+  },
+}));
 
   setMovementEntries((prev) => ({
     ...prev,
@@ -331,7 +355,8 @@ async function saveMovement(item) {
       amount: "",
     },
   }));
-
+await fetchCurrentInventoryCounts();
+await fetchMovementHistory();
   setMessage("Movement saved and inventory updated.");
 }
 
@@ -649,13 +674,42 @@ const inventoryCategories = [
   ...new Set(inventoryItems.map((item) => item.category)),
 ];
 
-const filteredInventoryItems =
-  inventoryCategoryFilter === "All"
-    ? inventoryItems
-    : inventoryItems.filter(
-        (item) => item.category === inventoryCategoryFilter
-      );
+const freeholdItemsNeedingReorder = inventoryItems.filter((item) => {
+  const currentTotal = calculateInventoryTotal(item);
+  const parAmount = Number(item.par_amount || 0);
 
+  return parAmount > 0 && currentTotal < parAmount;
+});
+
+const freeholdTotalReorderNeeded = freeholdItemsNeedingReorder.length;
+
+const freeholdTotalItems = inventoryItems.length;
+
+const freeholdRecentMovements = movementHistory.length;
+
+const filteredInventoryItems = inventoryItems.filter((item) => {
+  const matchesCategory =
+    inventoryCategoryFilter === "All" ||
+    item.category === inventoryCategoryFilter;
+
+  const searchText = inventorySearch.toLowerCase();
+
+  const matchesSearch =
+    !searchText ||
+    item.category?.toLowerCase().includes(searchText) ||
+    item.item_name?.toLowerCase().includes(searchText);
+
+  return matchesCategory && matchesSearch;
+});
+
+const reorderFilteredItems = filteredInventoryItems.filter((item) => {
+  if (!showReorderOnly) return true;
+
+  const currentTotal = calculateInventoryTotal(item);
+  const parAmount = Number(item.par_amount || 0);
+
+  return currentTotal < parAmount;
+});
 
 function updateEditedPar(itemId, field, value) {
   setEditedPar((prev) => ({
@@ -966,6 +1020,32 @@ async function saveInventoryItem(item) {
       <PackageCheck size={24} /> Freehold Inventory
     </h2>
 
+    <section className="statsGrid">
+  <Stat
+    icon={<PackageCheck />}
+    label="Total Items"
+    value={freeholdTotalItems}
+  />
+
+  <Stat
+    icon={<ClipboardPlus />}
+    label="Need Reorder"
+    value={freeholdTotalReorderNeeded}
+  />
+
+  <Stat
+    icon={<History />}
+    label="Movement Logs"
+    value={freeholdRecentMovements}
+  />
+
+  <Stat
+    icon={<Building2 />}
+    label="Location"
+    value="Freehold"
+  />
+</section>
+
     <div
       style={{
         display: "flex",
@@ -1001,22 +1081,43 @@ async function saveInventoryItem(item) {
       ))}
     </div>
 
-    <div style={{ marginBottom: "16px" }}>
-      <label style={{ fontWeight: 900, marginRight: "10px" }}>
-        Filter Category:
-      </label>
+      <div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "16px",
+    marginBottom: "20px",
+    flexWrap: "wrap",
+  }}
+>
+  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <label style={{ fontWeight: 900 }}>Search:</label>
 
-      <select
-        value={inventoryCategoryFilter}
-        onChange={(e) => setInventoryCategoryFilter(e.target.value)}
-      >
-        {inventoryCategories.map((category) => (
-          <option key={category} value={category}>
-            {category}
-          </option>
-        ))}
-      </select>
-    </div>
+    <input
+      value={inventorySearch}
+      onChange={(e) => setInventorySearch(e.target.value)}
+      placeholder="Search item or category..."
+      style={{ maxWidth: "320px" }}
+    />
+  </div>
+
+  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <label style={{ fontWeight: 900 }}>Filter Category:</label>
+
+    <select
+      value={inventoryCategoryFilter}
+      onChange={(e) => setInventoryCategoryFilter(e.target.value)}
+    >
+      {inventoryCategories.map((category) => (
+        <option key={category} value={category}>
+          {category}
+        </option>
+      ))}
+    </select>
+  </div>
+</div>
+
     <div
   className="historyTableWrap"
   style={{ display: bulkPage === "items" ? "block" : "none" }}
@@ -1034,88 +1135,88 @@ async function saveInventoryItem(item) {
 <th>Actions</th>
           </tr>
         </thead>
-        <tbody>
-          {inventoryItems.length === 0 ? (
-            <tr>
-              <td colSpan="8" className="noHistory">
-                No inventory items found.
-              </td>
-            </tr>
-          ) : (
-            filteredInventoryItems.map((item) => (
-              <tr key={item.id}>
-<td>{item.category}</td>
-<td>{item.item_name}</td>
-<td>
-  <input
-    value={editedItems[item.id]?.bulk_unit ?? item.bulk_unit ?? ""}
-    onChange={(e) =>
-      updateEditedItem(item.id, "bulk_unit", e.target.value)
-    }
-  />
-</td>
+      <tbody>
+  {inventoryItems.length === 0 ? (
+    <tr>
+      <td colSpan="8" className="noHistory">
+        No inventory items found.
+      </td>
+    </tr>
+  ) : (
+    filteredInventoryItems.map((item) => (
+      <tr key={item.id}>
+        <td>{item.category}</td>
+        <td>{item.item_name}</td>
 
-<td>
-  <input
-    value={editedItems[item.id]?.inner_unit ?? item.inner_unit ?? ""}
-    onChange={(e) =>
-      updateEditedItem(item.id, "inner_unit", e.target.value)
-    }
-  />
-</td>
+        <td>
+          <input
+            value={editedItems[item.id]?.bulk_unit ?? item.bulk_unit ?? ""}
+            onChange={(e) =>
+              updateEditedItem(item.id, "bulk_unit", e.target.value)
+            }
+          />
+        </td>
 
-<td>
-  <input
-    value={editedItems[item.id]?.base_unit ?? item.base_unit ?? ""}
-    onChange={(e) =>
-      updateEditedItem(item.id, "base_unit", e.target.value)
-    }
-  />
-</td>
+        <td>
+          <input
+            value={editedItems[item.id]?.inner_unit ?? item.inner_unit ?? ""}
+            onChange={(e) =>
+              updateEditedItem(item.id, "inner_unit", e.target.value)
+            }
+          />
+        </td>
 
-<td>
-  <input
-    type="number"
-    min="0"
-    value={
-      editedItems[item.id]?.base_units_per_bulk ??
-      item.base_units_per_bulk ??
-      0
-    }
-    onChange={(e) =>
-      updateEditedItem(item.id, "base_units_per_bulk", e.target.value)
-    }
-  />
-</td>
+        <td>
+          <input
+            value={editedItems[item.id]?.base_unit ?? item.base_unit ?? ""}
+            onChange={(e) =>
+              updateEditedItem(item.id, "base_unit", e.target.value)
+            }
+          />
+        </td>
 
-<td>
-  <input
-    type="number"
-    min="0"
-    value={
-      editedItems[item.id]?.base_units_per_inner ??
-      item.base_units_per_inner ??
-      0
-    }
-    onChange={(e) =>
-      updateEditedItem(item.id, "base_units_per_inner", e.target.value)
-    }
-  />
-</td>
+        <td>
+          <input
+            type="number"
+            min="0"
+            value={
+              editedItems[item.id]?.base_units_per_bulk ??
+              item.base_units_per_bulk ??
+              0
+            }
+            onChange={(e) =>
+              updateEditedItem(item.id, "base_units_per_bulk", e.target.value)
+            }
+          />
+        </td>
 
-<td>
-  <button
-    className="smallBtn"
-    onClick={() => saveInventoryItem(item)}
-  >
-    Save
-  </button>
-</td>
-              </tr>
-            ))
-          )
-        }
-        </tbody>
+        <td>
+          <input
+            type="number"
+            min="0"
+            value={
+              editedItems[item.id]?.base_units_per_inner ??
+              item.base_units_per_inner ??
+              0
+            }
+            onChange={(e) =>
+              updateEditedItem(item.id, "base_units_per_inner", e.target.value)
+            }
+          />
+        </td>
+
+        <td>
+          <button
+            className="smallBtn"
+            onClick={() => saveInventoryItem(item)}
+          >
+            Save
+          </button>
+        </td>
+      </tr>
+    ))
+  )}
+</tbody>
       </table>
     </div>
 
@@ -1222,48 +1323,62 @@ async function saveInventoryItem(item) {
     )}
 
 {bulkPage === "reorder" && (
-  <div className="historyTableWrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th>Item</th>
-          <th>Current Total</th>
-          <th>PAR Type</th>
-          <th>PAR Amount</th>
-          <th>Reorder Needed</th>
-<th>Actions</th>
-        </tr>
-      </thead>
+  <>
+    <div style={{ marginBottom: "16px" }}>
+      <button
+        className="btn secondary"
+        onClick={() => setShowReorderOnly((prev) => !prev)}
+      >
+        {showReorderOnly
+          ? "Show All Items"
+          : "Show Reorder Needed Only"}
+      </button>
+    </div>
 
-      <tbody>
-        {filteredInventoryItems.map((item) => {
-          const currentTotal = calculateInventoryTotal(item);
-          const parAmount = Number(item.par_amount || 0);
-          const reorderNeeded = Math.max(parAmount - currentTotal, 0);
+    <div className="historyTableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Item</th>
+            <th>Current Total</th>
+            <th>PAR Type</th>
+            <th>PAR Amount</th>
+            <th>Reorder Needed</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
 
-          return (
-            <tr key={item.id}>
-              <td>{item.category}</td>
-              <td>{item.item_name}</td>
-              <td>{currentTotal}</td>
-              <td>{item.par_type || "Case"}</td>
-              <td>{parAmount}</td>
-              <td>{reorderNeeded}</td>
-              <td>
-  <button
-    className="smallBtn"
-    onClick={() => resetCurrentInventoryCount(item)}
-  >
-    Reset Count
-  </button>
-</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  </div>
+        <tbody>
+          {reorderFilteredItems.map((item) => {
+            const currentTotal = calculateInventoryTotal(item);
+            const parAmount = Number(item.par_amount || 0);
+            const reorderNeeded = Math.max(parAmount - currentTotal, 0);
+
+            return (
+              <tr key={item.id}>
+                <td>{item.category}</td>
+                <td>{item.item_name}</td>
+                <td>{currentTotal}</td>
+                <td>{item.par_type || "Case"}</td>
+                <td>{parAmount}</td>
+                <td>{reorderNeeded}</td>
+
+                <td>
+                  <button
+                    className="smallBtn"
+                    onClick={() => resetCurrentInventoryCount(item)}
+                  >
+                    Reset Count
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  </>
 )}
 
 {bulkPage === "movement" && (
@@ -1350,14 +1465,15 @@ async function saveInventoryItem(item) {
       <th>Category</th>
       <th>Item</th>
       <th>Movement</th>
-<th>Quantity Change</th>
+<th>Type</th>
+<th>Amount</th>
 <th>Actions</th>    </tr>
   </thead>
 
   <tbody>
     {movementHistory.length === 0 ? (
       <tr>
-<td colSpan="6" className="noHistory">          No movement history found.
+<td colSpan="7" className="noHistory">          No movement history found.
         </td>
       </tr>
     ) : (
@@ -1375,9 +1491,15 @@ async function saveInventoryItem(item) {
             {log.inventory_items?.item_name || "Unknown"}
           </td>
 
-          <td>{log.movement_type}</td>
+        <td>{log.movement_type}</td>
 
-          <td>
+<td>{log.count_type || "N/A"}</td>
+
+<td className="qty">
+  {log.quantity_change}
+</td>
+
+<td>
   <button
     className="smallBtn"
     onClick={() => deleteMovementHistoryItem(log.id)}
@@ -1447,21 +1569,41 @@ async function saveInventoryItem(item) {
     </table>
   </div>
 )}
-<div style={{ marginBottom: "16px" }}>
-  <label style={{ fontWeight: 900, marginRight: "10px" }}>
-    Filter Category:
-  </label>
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "16px",
+    marginBottom: "20px",
+    flexWrap: "wrap",
+  }}
+>
+  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <label style={{ fontWeight: 900 }}>Search:</label>
 
-  <select
-    value={inventoryCategoryFilter}
-    onChange={(e) => setInventoryCategoryFilter(e.target.value)}
-  >
-    {inventoryCategories.map((category) => (
-      <option key={category} value={category}>
-        {category}
-      </option>
-    ))}
-  </select>
+    <input
+      value={inventorySearch}
+      onChange={(e) => setInventorySearch(e.target.value)}
+      placeholder="Search item or category..."
+      style={{ maxWidth: "320px" }}
+    />
+  </div>
+
+  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+    <label style={{ fontWeight: 900 }}>Filter Category:</label>
+
+    <select
+      value={inventoryCategoryFilter}
+      onChange={(e) => setInventoryCategoryFilter(e.target.value)}
+    >
+      {inventoryCategories.map((category) => (
+        <option key={category} value={category}>
+          {category}
+        </option>
+      ))}
+    </select>
+  </div>
 </div>
 
   </section>
