@@ -128,6 +128,7 @@ export default function App() {
   const [supervisorPage, setSupervisorPage] = useState("restock");
   const [bulkPage, setBulkPage] = useState("count");
   const [inventoryItems, setInventoryItems] = useState([]);
+  const [inventoryCounts, setInventoryCounts] = useState({});
   const [form, setForm] = useState({
     date: today,
     employeeId: "",
@@ -288,6 +289,19 @@ await fetchLogs();
       )
     );
   }
+
+function calculateInventoryTotal(item) {
+  const count = inventoryCounts[item.id] || {};
+
+  const caseCount = Number(count.cases || 0);
+  const unitCount = Number(count.units || 0);
+  const individualCount = Number(count.individual || 0);
+
+  const caseQty = Number(item.base_units_per_bulk || 0);
+  const unitQty = Number(item.base_units_per_inner || 0);
+
+  return caseCount * caseQty + unitCount * unitQty + individualCount;
+}
 
   function markStationRestocked(station) {
     setLogs((current) =>
@@ -535,7 +549,7 @@ await fetchLogs();
     flexWrap: "wrap",
   }}
 >
-  {["count", "reorder", "movement", "settings"].map((page) => (
+  {["count", "reorder", "movement", "items", "par"].map((page) => (
     <button
       key={page}
       onClick={() => setBulkPage(page)}
@@ -555,7 +569,9 @@ await fetchLogs();
         ? "Reorder"
         : page === "movement"
         ? "Movement Log"
-        : "Settings"}
+        : page === "items"
+? "Items List"
+: "PAR"}
     </button>
   ))}
 </div>
@@ -563,19 +579,18 @@ await fetchLogs();
     </h2>
     <div
   className="historyTableWrap"
-  style={{ display: bulkPage === "settings" ? "block" : "none" }}
+  style={{ display: bulkPage === "items" ? "block" : "none" }}
 >
       <table>
         <thead>
           <tr>
 <th>Category</th>
 <th>Item</th>
-<th>Base Unit</th>
-<th>Case Unit</th>
-<th>Case = Individual</th>
-<th>Unit Name</th>
-<th>Unit = Individual</th>
-<th>PAR Level</th>
+<th>Case</th>
+<th>Units</th>
+<th>Individual</th>
+<th>Case Qty</th>
+<th>Units Qty</th>
           </tr>
         </thead>
         <tbody>
@@ -588,14 +603,13 @@ await fetchLogs();
           ) : (
             inventoryItems.map((item) => (
               <tr key={item.id}>
-                <td>{item.category}</td>
-                <td>{item.item_name}</td>
-                <td>{item.base_unit}</td>
-                <td>{item.bulk_unit || "N/A"}</td>
-                <td>{item.base_units_per_bulk}</td>
-                <td>{item.inner_unit || "N/A"}</td>
-                <td>{item.base_units_per_inner}</td>
-                <td>{item.par_level}</td>
+<td>{item.category}</td>
+<td>{item.item_name}</td>
+<td>{item.bulk_unit || ""}</td>
+<td>{item.inner_unit || ""}</td>
+<td>{item.base_unit || ""}</td>
+<td>{item.base_units_per_bulk || 0}</td>
+<td>{item.base_units_per_inner || 0}</td>
               </tr>
             ))
           )
@@ -603,12 +617,87 @@ await fetchLogs();
         </tbody>
       </table>
     </div>
-    {bulkPage === "count" && (
-  <div className="historyTableWrap">
-    <h3>Inventory Count</h3>
-    <p>Count page coming next. This is where supervisors will enter bulk, inner, and individual counts.</p>
-  </div>
-)}
+
+    {bulkPage === "count" && (  
+   <div className="historyTableWrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Item</th>
+        <th>Case</th>
+        <th>Units</th>
+        <th>Individual</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {inventoryItems.map((item) => (
+        <tr key={item.id}>
+          <td>{item.category}</td>
+
+          <td>{item.item_name}</td>
+
+          <td>
+            <input
+              type="number"
+              min="0"
+              value={inventoryCounts[item.id]?.cases || ""}
+              onChange={(e) =>
+                setInventoryCounts((prev) => ({
+                  ...prev,
+                  [item.id]: {
+                    ...prev[item.id],
+                    cases: e.target.value
+                  }
+                }))
+              }
+            />
+          </td>
+
+          <td>
+            <input
+              type="number"
+              min="0"
+              value={inventoryCounts[item.id]?.units || ""}
+              onChange={(e) =>
+                setInventoryCounts((prev) => ({
+                  ...prev,
+                  [item.id]: {
+                    ...prev[item.id],
+                    units: e.target.value
+                  }
+                }))
+              }
+            />
+          </td>
+
+          <td>
+            <input
+              type="number"
+              min="0"
+              value={inventoryCounts[item.id]?.individual || ""}
+              onChange={(e) =>
+                setInventoryCounts((prev) => ({
+                  ...prev,
+                  [item.id]: {
+                    ...prev[item.id],
+                    individual: e.target.value
+                  }
+                }))
+              }
+            />
+          </td>
+          <td className="qty">
+  {calculateInventoryTotal(item)}
+</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
+    )}
 
 {bulkPage === "reorder" && (
   <div className="historyTableWrap">
@@ -621,6 +710,13 @@ await fetchLogs();
   <div className="historyTableWrap">
     <h3>Movement Log</h3>
     <p>Movement log coming next. This will track inventory added, removed, adjusted, or received.</p>
+  </div>
+)}
+
+{bulkPage === "par" && (
+  <div className="historyTableWrap">
+    <h3>PAR Levels</h3>
+    <p>This is where we will set reorder targets for each item.</p>
   </div>
 )}
   </section>
@@ -1294,3 +1390,4 @@ function Stat({ icon, label, value }) {
     </div>
   );
 }
+
