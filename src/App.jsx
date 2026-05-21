@@ -125,6 +125,9 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [supervisorPage, setSupervisorPage] = useState("restock");
+  const [bulkPage, setBulkPage] = useState("count");
+  const [inventoryItems, setInventoryItems] = useState([]);
   const [form, setForm] = useState({
     date: today,
     employeeId: "",
@@ -134,9 +137,10 @@ export default function App() {
     qty: "",
     note: "",
   });
-    useEffect(() => {
+  useEffect(() => {
     fetchLogs();
-    }, []);
+    fetchInventoryItems();
+  }, []);
 
     async function fetchLogs() {
     const { data, error } = await supabase
@@ -163,6 +167,19 @@ export default function App() {
 
     setLoading(false);
     }
+
+  async function fetchInventoryItems() {
+    const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .eq("active", true)
+    .order("category", { ascending: true })
+    .order("item_name", { ascending: true });
+
+  if (!error && data) {
+    setInventoryItems(data);
+  }
+}
 
   const pendingLogs = logs.filter((log) => !log.restocked);
 
@@ -439,7 +456,176 @@ await fetchLogs();
         </main>
       ) : (
         <main className="supervisorPage">
-          <section className="statsGrid">
+        <div
+  style={{
+    display: "flex",
+    gap: "14px",
+    marginBottom: "32px",
+    padding: "14px",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    background: "rgba(15, 23, 42, 0.85)",
+    border: "1px solid rgba(34, 211, 238, 0.2)",
+    borderRadius: "20px",
+  }}
+>
+  <button
+    onClick={() => setSupervisorPage("restock")}
+    style={{
+      border: "none",
+      background:
+        supervisorPage === "restock" ? "#22d3ee" : "#1e293b",
+      color:
+        supervisorPage === "restock" ? "#020617" : "#e2e8f0",
+      padding: "12px 20px",
+      borderRadius: "14px",
+      fontWeight: 800,
+      cursor: "pointer",
+      fontSize: "14px",
+    }}
+  >
+    Restock Dashboard
+  </button>
+
+  <button
+    onClick={() => setSupervisorPage("history")}
+    style={{
+      border: "none",
+      background:
+        supervisorPage === "history" ? "#22d3ee" : "#1e293b",
+      color:
+        supervisorPage === "history" ? "#020617" : "#e2e8f0",
+      padding: "12px 20px",
+      borderRadius: "14px",
+      fontWeight: 800,
+      cursor: "pointer",
+      fontSize: "14px",
+    }}
+  >
+    Usage History
+  </button>
+
+  <button
+    onClick={() => setSupervisorPage("bulk")}
+    style={{
+      border: "none",
+      background:
+        supervisorPage === "bulk" ? "#22d3ee" : "#1e293b",
+      color:
+        supervisorPage === "bulk" ? "#020617" : "#e2e8f0",
+      padding: "12px 20px",
+      borderRadius: "14px",
+      fontWeight: 800,
+      cursor: "pointer",
+      fontSize: "14px",
+    }}
+  >
+    Main HQ Bulk Inventory
+  </button>
+</div>
+{supervisorPage === "bulk" && (
+  <section className="historyCard">
+    <h2>
+      <div
+  style={{
+    display: "flex",
+    gap: "10px",
+    marginBottom: "20px",
+    flexWrap: "wrap",
+  }}
+>
+  {["count", "reorder", "movement", "settings"].map((page) => (
+    <button
+      key={page}
+      onClick={() => setBulkPage(page)}
+      style={{
+        border: "none",
+        background: bulkPage === page ? "#22d3ee" : "#e2e8f0",
+        color: "#020617",
+        padding: "10px 16px",
+        borderRadius: "12px",
+        fontWeight: 900,
+        cursor: "pointer",
+      }}
+    >
+      {page === "count"
+        ? "Count"
+        : page === "reorder"
+        ? "Reorder"
+        : page === "movement"
+        ? "Movement Log"
+        : "Settings"}
+    </button>
+  ))}
+</div>
+      <PackageCheck size={24} /> Main HQ Bulk Inventory
+    </h2>
+    <div
+  className="historyTableWrap"
+  style={{ display: bulkPage === "settings" ? "block" : "none" }}
+>
+      <table>
+        <thead>
+          <tr>
+<th>Category</th>
+<th>Item</th>
+<th>Base Unit</th>
+<th>Case Unit</th>
+<th>Case = Individual</th>
+<th>Unit Name</th>
+<th>Unit = Individual</th>
+<th>PAR Level</th>
+          </tr>
+        </thead>
+        <tbody>
+          {inventoryItems.length === 0 ? (
+            <tr>
+              <td colSpan="8" className="noHistory">
+                No inventory items found.
+              </td>
+            </tr>
+          ) : (
+            inventoryItems.map((item) => (
+              <tr key={item.id}>
+                <td>{item.category}</td>
+                <td>{item.item_name}</td>
+                <td>{item.base_unit}</td>
+                <td>{item.bulk_unit || "N/A"}</td>
+                <td>{item.base_units_per_bulk}</td>
+                <td>{item.inner_unit || "N/A"}</td>
+                <td>{item.base_units_per_inner}</td>
+                <td>{item.par_level}</td>
+              </tr>
+            ))
+          )
+        }
+        </tbody>
+      </table>
+    </div>
+    {bulkPage === "count" && (
+  <div className="historyTableWrap">
+    <h3>Inventory Count</h3>
+    <p>Count page coming next. This is where supervisors will enter bulk, inner, and individual counts.</p>
+  </div>
+)}
+
+{bulkPage === "reorder" && (
+  <div className="historyTableWrap">
+    <h3>Reorder List</h3>
+    <p>Reorder page coming next. This will calculate what needs to be ordered based on saved counts and PAR levels.</p>
+  </div>
+)}
+
+{bulkPage === "movement" && (
+  <div className="historyTableWrap">
+    <h3>Movement Log</h3>
+    <p>Movement log coming next. This will track inventory added, removed, adjusted, or received.</p>
+  </div>
+)}
+  </section>
+  )}
+          <section className="statsGrid" style={{ display: supervisorPage === "restock" ? "grid" : "none" }}>
             <Stat
               icon={<Building2 />}
               label="Stations Needing Supplies"
@@ -453,18 +639,12 @@ await fetchLogs();
             <Stat icon={<PackageCheck />} label="Items Needed" value={totalNeeded} />
             <Stat icon={<History />} label="Most Used Item" value={mostUsedItem} />
           </section>
-
-          <div className="sectionHeader">
-            <div>
-              <h2>Supervisor Restock Dashboard</h2>
-              <p>Grouped by station and pending supply needs.</p>
-            </div>
-            <button className="btn secondary" onClick={clearAllLogs}>
-              <RotateCcw size={16} /> Clear All Logs
-            </button>
-          </div>
-
-          <section className="stationGrid">
+          <section className="stationGrid" style={{
+display:
+  supervisorPage === "restock"
+    ? "grid"
+    : "none"
+}}>
             {stations.map((station) => {
               const stationPendingLogs = pendingLogs.filter(
                 (log) => log.station === station
@@ -543,7 +723,10 @@ await fetchLogs();
             })}
           </section>
 
-          <section className="historyCard">
+          <section
+  className="historyCard"
+  style={{ display: supervisorPage === "history" ? "block" : "none" }}
+>
             <h2>
               <History size={24} /> Usage History
             </h2>
