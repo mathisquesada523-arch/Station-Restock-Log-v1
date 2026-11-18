@@ -12,17 +12,17 @@ Double-click `start.bat`. It installs the locked dependencies if needed, starts 
 - Netlify site verified. The locally built JavaScript and CSS matched the published files byte for byte. [Deployed Restock app](https://stationrestocklogv1.netlify.app/)
 - Supabase project reference verified against the source and deployed app. The owner resumed the project and the signed-in Project Overview confirmed restoration completed. The local app then received HTTP 200 for supply logs, inventory items, current counts, and inventory movements. [Supabase project dashboard](https://supabase.com/dashboard/project/tbybflqfgixarvkxhndk) · [Live read-only test log](C:/Users/mathi/Projects/_recovery/restock/browser-live-read-only.log)
 - The crew form and supervisor login controls rendered. Changing the category populated item options. The offline test passed for the crew submission, supervisor dashboard, usage history, and below-PAR display. Verifying the signed-in supervisor view with live data still needs the owner's app sign-in. The production build passed, and ESLint reported eight errors already present in the recovered code.
-- The supervisor access code is embedded in the front end and the public Git history. It stays unchanged until the planned security fix. Local commits are allowed. The code’s value belongs outside notes, screenshots, and new commits. The normal launcher uses production Supabase. Keep tests there read-only and use the offline harness for sample submissions.
+- Supervisors sign in with a Supabase Auth email and password. The old hardcoded code is gone from the source, but it's still in the public Git history and the currently deployed site until the next push. The database lockdown is in `supabase/migrations/` and isn't applied to the live project yet. See the rollout steps in `AGENTS.md`. The old code's value belongs outside notes, screenshots, and new commits. The normal launcher uses production Supabase. Keep tests there read-only and use the offline harness for sample submissions.
 
 ## Run the approved offline browser test
 
-With this app’s dependencies installed, use PowerShell to run the recovery harness. It starts its own loopback server, verifies its external request block, and uses a synthetic supervisor code and disposable in-memory data.
+With this app’s dependencies installed, use PowerShell to run the recovery harness. It starts its own loopback server, verifies its external request block, and uses a mocked Supabase sign-in with a synthetic supervisor account and disposable in-memory data.
 
 ```powershell
 node.exe 'C:\Users\mathi\Projects\_recovery\restock\browser-offline-fixture.mjs'
 ```
 
-The test checks one crew submission in the supervisor dashboard and Usage History, then verifies the reorder quantity and filter using separate bulk inventory data. [Verified run log](C:/Users/mathi/Projects/_recovery/restock/browser-offline-fixture.log)
+The test checks that the crew view makes no reads, a wrong password is rejected, and signing out works. It then checks one crew submission in the supervisor dashboard and Usage History, then verifies the reorder quantity and filter using separate bulk inventory data. [Verified run log](C:/Users/mathi/Projects/_recovery/restock/browser-offline-fixture.log)
 
 ## Team workflow (Claude Code + Codex)
 
