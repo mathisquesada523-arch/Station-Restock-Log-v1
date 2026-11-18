@@ -20,6 +20,7 @@ Until step 3, the live database stays open to anyone.
   - New migration `supabase/migrations/20261118120000_supervisor_auth_rls.sql`: adds a `public.supervisors` allowlist and `is_supervisor()`, and drops all the "allow anyone" policies. Crew can only add supply logs, with checked values and columns. Only listed supervisors can read or change logs and the inventory tables.
   - The offline fixture now mocks the Supabase sign-in. It checks that the crew view makes no reads, a wrong password is rejected, a supervisor sign-in loads the data, and signing out returns to the crew view. It passed, and the build passed.
   - Not covered offline: the database rules themselves. Check them on the live project after the migration is applied.
+- Nov 18, 2026: With the owner's yes, pushed `4d5f730` to `main`. Netlify now serves the email and password sign-in, and the old code is not in the live bundle. Rollout step 2 is done. A read-only check right after found 0 users in Supabase Auth, so step 1 isn't finished yet, and no one can open the supervisor view until a supervisor user exists. The migration is not applied.
 
 The crew view records supplies taken from a station. The supervisor view shows restock logs and manages bulk inventory, including below-PAR stock. PAR is the target stock level.
 
