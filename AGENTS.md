@@ -2,10 +2,10 @@
 
 ## Next step
 
-Roll out the supervisor sign-in and database lockdown. It's built and committed locally, but not live. Owner steps, in order:
+Paused by the owner (Nov 18, 2026). The live site uses the old supervisor code again. When the owner picks this back up:
 1. In the Supabase dashboard (Authentication), create a supervisor user with email and password for each supervisor. Turn off "Allow new users to sign up".
-2. Give Claude the yes to push to `main`. Netlify deploys the new sign-in. It also works under the old open policies.
-3. Give Claude the yes to apply `supabase/migrations/20261118120000_supervisor_auth_rls.sql` to the live project. Then add each supervisor to `public.supervisors` (the SQL is at the bottom of the file).
+2. Bring back the Supabase sign-in from commit `4d5f730` (`git checkout 4d5f730 -- src/App.jsx src/supabase.js`). Swap in the matching offline test, `_recovery/restock/browser-offline-fixture-supabase-auth.mjs`. Build, test, commit, and push with the owner's yes.
+3. With the owner's yes, apply `supabase/migrations/20261118120000_supervisor_auth_rls.sql` to the live project. Then add each supervisor to `public.supervisors`.
 4. Sign in on the live site and check the dashboard, history, and inventory. Then confirm that a signed-out request gets no rows back.
 Until step 3, the live database stays open to anyone.
 
@@ -20,7 +20,8 @@ Until step 3, the live database stays open to anyone.
   - New migration `supabase/migrations/20261118120000_supervisor_auth_rls.sql`: adds a `public.supervisors` allowlist and `is_supervisor()`, and drops all the "allow anyone" policies. Crew can only add supply logs, with checked values and columns. Only listed supervisors can read or change logs and the inventory tables.
   - The offline fixture now mocks the Supabase sign-in. It checks that the crew view makes no reads, a wrong password is rejected, a supervisor sign-in loads the data, and signing out returns to the crew view. It passed, and the build passed.
   - Not covered offline: the database rules themselves. Check them on the live project after the migration is applied.
-- Nov 18, 2026: With the owner's yes, pushed `4d5f730` to `main`. Netlify now serves the email and password sign-in, and the old code is not in the live bundle. Rollout step 2 is done. A read-only check right after found 0 users in Supabase Auth, so step 1 isn't finished yet, and no one can open the supervisor view until a supervisor user exists. The migration is not applied.
+- Nov 18, 2026: With the owner's yes, pushed `4d5f730` to `main`. Netlify now serves the email and password sign-in, and the old code is not in the live bundle. A read-only check right after found 0 users in Supabase Auth, so no one could open the supervisor view.
+- Nov 18, 2026: The owner chose to restore the old supervisor code for now and pause the security fix. `src/App.jsx` and `src/supabase.js` match `c35b645` again, and the original offline fixture is restored. The build and offline test passed, and the change was pushed with the owner's yes. The Supabase Auth version stays in `4d5f730`, and the migration file stays in the repo, not applied.
 
 The crew view records supplies taken from a station. The supervisor view shows restock logs and manages bulk inventory, including below-PAR stock. PAR is the target stock level.
 
@@ -28,15 +29,16 @@ The crew view records supplies taken from a station. The supervisor view shows r
 - Double-click `start.bat` or run `npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort`. Open [the local app](http://127.0.0.1:5173/). For a fresh install run `npm.cmd ci`. Use `npm.cmd run build` to check the production build.
 - Recovery baseline `7a7fe1e`. The built JavaScript and CSS matched the Netlify deploy byte for byte. Keep the Windows launcher, the loopback binding, and the ignore rules for `.env` files, dependencies, and build output. Setup left the app code and dependency versions as recovered.
 - The crew form passed browser checks. The approved offline browser test confirmed one crew submission in the supervisor dashboard and usage history, plus the below-PAR calculation and reorder filter. Supabase confirmed restoration completed, and the local app received HTTP 200 for all four live startup reads. The live supervisor view still needs the owner's app sign-in. Build passed. ESLint reports eight pre-existing errors. [Supabase project dashboard](https://supabase.com/dashboard/project/tbybflqfgixarvkxhndk) · [Live read-only test log](C:/Users/mathi/Projects/_recovery/restock/browser-live-read-only.log)
-- Supervisor code (Nov 18, 2026): the old hardcoded code is removed from `src/App.jsx` locally. It stays in the public Git history and in the currently deployed JavaScript until the push. Once the migration is live, the old code unlocks nothing. Scrubbing the history isn't needed unless the same value is used somewhere else, in which case change it there. Making the repository private is optional and the owner's call. Never put the value in notes, logs, captures, messages, or new commits.
+- Supervisor code (Nov 18, 2026): the owner chose to keep the old hardcoded code in `src/App.jsx` until the security fix resumes. The value is public in the Git history and the deployed JavaScript, and the database is open to anyone with the public key. Once the migration is live, the old code unlocks nothing. Scrubbing the history isn't needed unless the same value is used somewhere else. Making the repository private is optional and the owner's call. Never write the value into notes, logs, captures, or messages.
 
 ## Checks to preserve
 
 - [x] Crew view opens and shows the date, station, category, item, and Submit controls. Choosing a category populates item choices. Leave Submit untouched during production-backed checks.
 - [x] The crew view shows the Supervisor Login control.
+- [x] With the restored code, the original offline fixture passes (Nov 18, 2026).
 - [ ] After rollout, the owner signs in on the live site. Inspect Restock Dashboard, history, and bulk inventory using read-only checks.
 - [ ] After the migration, confirm that a signed-out request gets no rows from any table, and that the crew form can still submit.
-- [x] Offline fixture: the crew view makes no reads, a wrong password is rejected, a supervisor sign-in loads the data, and signing out returns to the crew view.
+- [x] Supabase Auth version only (`4d5f730`, fixture `browser-offline-fixture-supabase-auth.mjs`): the crew view makes no reads, a wrong password is rejected, a supervisor sign-in loads the data, and signing out returns to the crew view.
 - [x] The initial log, item, count, and movement requests succeeded against the restored backend using read-only access.
 - [x] In the approved offline browser fixture, submit one sample crew entry and confirm it reaches the supervisor dashboard and Usage History. In Freehold Inventory, confirm current stock 6 against PAR 10 shows 4 needed and the reorder-only filter excludes an item at PAR.
 - [x] A production build completes using the locked dependencies.

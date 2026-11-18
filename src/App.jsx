@@ -120,13 +120,8 @@ const supplyCatalog = {
 const today = new Date().toISOString().slice(0, 10);
 
 export default function App() {
-  // Supervisor access is a Supabase Auth session. The database policies decide
-  // what a signed-in account may read or change.
-  const [session, setSession] = useState(null);
-  const view = session ? "supervisor" : "crew";
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [signingIn, setSigningIn] = useState(false);
+  const [view, setView] = useState("crew");
+  const [supervisorCode, setSupervisorCode] = useState("");
   const [message, setMessage] = useState("");
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -150,43 +145,12 @@ export default function App() {
     qty: "",
     note: "",
   });
-  function clearSupervisorData() {
-    setLogs([]);
-    setInventoryItems([]);
-    setInventoryCounts({});
-    setMovementHistory([]);
-    setEditedItems({});
-    setEditedPar({});
-    setMovementEntries({});
-  }
-
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      if (!newSession) clearSupervisorData();
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const signedInUserId = session?.user?.id;
-
-  // Supervisor data loads only after sign-in; the crew view reads nothing.
-  useEffect(() => {
-    if (!signedInUserId) return;
-    supabase.rpc("is_supervisor").then(({ data, error }) => {
-      if (!error && data === false) {
-        setMessage("This account is not on the supervisor list.");
-        supabase.auth.signOut();
-      }
-    });
     fetchLogs();
     fetchInventoryItems();
     fetchCurrentInventoryCounts();
     fetchMovementHistory();
-  }, [signedInUserId]);
+  }, []);
 
     async function fetchLogs() {
     const { data, error } = await supabase
@@ -620,6 +584,7 @@ if (error) {
   return;
 }
 
+await fetchLogs();
     setMessage(
       `Submitted: Employee ${newLog.employeeId} took ${newLog.qty} ${newLog.item} from ${newLog.station}. Supervisor dashboard updated.`
     );
@@ -635,33 +600,18 @@ if (error) {
     });
   }
 
-  async function supervisorLogin(event) {
-    event?.preventDefault();
-    if (signingIn) return;
-    if (!loginEmail.trim() || !loginPassword) {
-      setMessage("Enter your supervisor email and password.");
+  function supervisorLogin() {
+    if (supervisorCode === "medstar7021") {
+      setView("supervisor");
+      setMessage("");
       return;
     }
-    setSigningIn(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: loginEmail.trim(),
-      password: loginPassword,
-    });
-    setSigningIn(false);
-    setLoginPassword("");
-    if (error) {
-      setMessage("Sign-in failed. Check your email and password.");
-      return;
-    }
-    setMessage("");
+    setMessage("Invalid supervisor code.");
   }
 
-  async function supervisorLogout() {
-    await supabase.auth.signOut();
-    setSession(null);
-    clearSupervisorData();
-    setLoginEmail("");
-    setLoginPassword("");
+  function supervisorLogout() {
+    setView("crew");
+    setSupervisorCode("");
     setMessage("");
   }
 
@@ -879,27 +829,17 @@ async function saveInventoryItem(item) {
             Exit Supervisor View
           </button>
         ) : (
-          <form className="supervisorLogin" onSubmit={supervisorLogin}>
+          <div className="supervisorLogin">
             <input
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              type="email"
-              autoComplete="username"
-              placeholder="Supervisor email"
-              aria-label="Supervisor email"
-            />
-            <input
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
+              value={supervisorCode}
+              onChange={(e) => setSupervisorCode(e.target.value)}
               type="password"
-              autoComplete="current-password"
-              placeholder="Password"
-              aria-label="Supervisor password"
+              placeholder="Supervisor code"
             />
-            <button className="btn" type="submit" disabled={signingIn}>
+            <button className="btn" onClick={supervisorLogin}>
               Supervisor Login
             </button>
-          </form>
+          </div>
         )}
       </motion.header>
 
@@ -2297,7 +2237,6 @@ display:
 
           .supervisorLogin {
             width: 100%;
-            flex-wrap: wrap;
           }
 
           .supervisorLogin input,
